@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Chatvia</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta content="Responsive Bootstrap 5 Chat App" name="description" />
+    <link rel="shortcut icon" href="assets/images/favicon.ico">
+
+    <link href="assets/css/bootstrap.min.css" id="bootstrap-style" rel="stylesheet" type="text/css" />
+    <link href="assets/css/icons.min.css" rel="stylesheet" type="text/css" />
+    <link href="assets/css/app.min.css" id="app-style" rel="stylesheet" type="text/css" />
+
+    <style>
+        /* replaces the owl carousel with a plain scroll row */
+        .online-strip {
+            display: flex;
+            gap: 1rem;
+            overflow-x: auto;
+            padding-bottom: .25rem;
+            scrollbar-width: none;
+        }
+
+        .online-strip::-webkit-scrollbar {
+            display: none;
+        }
+
+        .online-strip .user-status-box {
+            flex: 0 0 auto;
+            width: 62px;
+        }
+
+        /* optimistic send states */
+        .msg-pending .ctext-wrap-content {
+            opacity: .6;
+        }
+
+        .msg-failed .ctext-wrap-content {
+            border: 1px solid var(--bs-danger);
+        }
+
+        .msg-retry {
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        .empty-note {
+            padding: 2rem 1rem;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body data-auth="require">
+
+    <div class="layout-wrapper d-lg-flex">
+
+        <!-- Start left sidebar-menu -->
+        <div class="side-menu flex-lg-column me-lg-1 ms-lg-0">
+            <div class="navbar-brand-box">
+                <a href="index.html" class="logo logo-dark">
+                    <span class="logo-sm"><img src="assets/images/logo.svg" alt="" height="30"></span>
+                </a>
+                <a href="index.html" class="logo logo-light">
+                    <span class="logo-sm"><img src="assets/images/logo.svg" alt="" height="30"></span>
+                </a>
+            </div>
+
+            <div class="flex-lg-column my-auto">
+                <ul class="nav nav-pills side-menu-nav justify-content-center" role="tablist">
+                    <li class="nav-item" data-bs-toggle="tooltip" data-bs-placement="top" title="Profile">
+                        <a class="nav-link" id="pills-user-tab" data-bs-toggle="pill" href="#pills-user" role="tab">
+                            <i class="ri-user-2-line"></i>
+                        </a>
+                    </li>
+                    <li class="nav-item" data-bs-toggle="tooltip" data-bs-placement="top" title="Chats">
+                        <a class="nav-link active" id="pills-chat-tab" data-bs-toggle="pill" href="#pills-chat"
+                            role="tab">
+                            <i class="ri-message-3-line"></i>
+                        </a>
+                    </li>
+                    <li class="nav-item" data-bs-toggle="tooltip" data-bs-placement="top" title="Contacts">
+                        <a class="nav-link" id="pills-contacts-tab" data-bs-toggle="pill" href="#pills-contacts"
+                            role="tab">
+                            <i class="ri-contacts-line"></i>
+                        </a>
+                    </li>
+                    <li class="nav-item dropdown profile-user-dropdown d-inline-block d-lg-none">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <img src="assets/images/users/avatar-1.jpg" alt="" class="profile-user rounded-circle"
+                                data-me-avatar>
+                        </a>
+                        <div class="dropdown-menu">
+                            <a class="dropdown-item" href="#" data-bs-toggle="pill" data-bs-target="#pills-user">Profile
+                                <i class="ri-profile-line float-end text-muted"></i></a>
+                            <div class="dropdown-divider"></div>
+                            <a class="dropdown-item" href="#" id="logout-mobile">Log out <i
+                                    class="ri-logout-circle-r-line float-end text-muted"></i></a>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="flex-lg-column d-none d-lg-block">
+                <ul class="nav side-menu-nav justify-content-center">
+                    <li class="nav-item">
+                        <a class="nav-link light-dark-mode" href="#" data-bs-toggle="tooltip" data-bs-trigger="hover"
+                            data-bs-placement="right" title="Dark / Light Mode">
+                            <i class='ri-sun-line theme-mode-icon'></i>
+                        </a>
+                    </li>
+                    <li class="nav-item btn-group dropup profile-user-dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <img src="assets/images/users/avatar-1.jpg" alt="" class="profile-user rounded-circle"
+                                data-me-avatar>
+                        </a>
+                        <div class="dropdown-menu">
+                            <a class="dropdown-item" href="#" data-bs-toggle="pill" data-bs-target="#pills-user">Profile
+                                <i class="ri-profile-line float-end text-muted"></i></a>
+                            <div class="dropdown-divider"></div>
+                            <a class="dropdown-item" href="#" id="logout-desktop">Log out <i
+                                    class="ri-logout-circle-r-line float-end text-muted"></i></a>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        <!-- end left sidebar-menu -->
+
+
+        <!-- start chat-leftsidebar -->
+        <div class="chat-leftsidebar me-lg-1 ms-lg-0">
+            <div class="tab-content">
+
+                <!-- ============ Profile tab ============ -->
+                <div class="tab-pane" id="pills-user" role="tabpanel">
+                    <div class="p-4 border-bottom">
+                        <div class="text-center">
+                            <div class="mb-4">
+                                <img src="assets/images/users/avatar-1.jpg"
+                                    class="rounded-circle avatar-lg img-thumbnail" alt="" data-me-avatar>
+                            </div>
+                            <h5 class="font-size-16 mb-1 text-truncate" data-me-name>—</h5>
+                            <p class="text-muted text-truncate mb-1" data-me-username>—</p>
+                        </div>
+                    </div>
+
+                    <div class="p-4 user-profile-desc" data-simplebar>
+                        <div class="mb-4">
+                            <label class="form-label font-size-14">Display name</label>
+                            <input type="text" class="form-control" id="profile-display-name" maxlength="40">
+                            <div class="form-text">Shown to other people instead of your username.</div>
+                        </div>
+                        <button class="btn btn-primary w-100" id="profile-save">Save changes</button>
+                        <div id="profile-feedback" class="form-text mt-2"></div>
+
+                        <hr class="my-4">
+
+                        <div>
+                            <p class="text-muted mb-1">Username</p>
+                            <h5 class="font-size-14" data-me-username>—</h5>
+                        </div>
+                        <div class="mt-4">
+                            <p class="text-muted mb-1">Email</p>
+                            <h5 class="font-size-14" data-me-email>—</h5>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ============ Chats tab ============ -->
+                <div class="tab-pane fade show active" id="pills-chat" role="tabpanel">
+                    <div>
+                        <div class="px-4 pt-4">
+                            <h4 class="mb-4">Chats</h4>
+                            <div class="search-box chat-search-box">
+                                <div class="input-group mb-3 rounded-3">
+                                    <span class="input-group-text text-muted bg-light pe-1 ps-3" id="basic-addon1">
+                                        <i class="ri-search-line search-icon font-size-18"></i>
+                                    </span>
+                                    <input type="text" id="chat-filter" class="form-control bg-light"
+                                        placeholder="Search your chats" aria-describedby="basic-addon1">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- online strip, populated in Phase 4 -->
+                        <div class="px-4 pb-4 d-none" id="online-strip-wrap" dir="ltr">
+                            <div class="online-strip" id="online-strip"></div>
+                        </div>
+
+                        <div class="">
+                            <h5 class="mb-3 px-3 font-size-16">Recent</h5>
+                            <div class="chat-message-list px-2" data-simplebar>
+                                <ul class="list-unstyled chat-list chat-user-list" id="conversation-list"></ul>
+                                <div class="empty-note text-muted d-none" id="conversation-empty">
+                                    <i class="ri-chat-3-line d-block font-size-24 mb-2"></i>
+                                    No chats yet. Open Contacts to start one.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ============ Contacts tab ============ -->
+                <div class="tab-pane" id="pills-contacts" role="tabpanel">
+                    <div>
+                        <div class="p-4">
+                            <h4 class="mb-4">Contacts</h4>
+                            <div class="search-box chat-search-box">
+                                <div class="input-group mb-3 rounded-3">
+                                    <span class="input-group-text text-muted bg-light pe-1 ps-3" id="basic-addon2">
+                                        <i class="ri-search-line search-icon font-size-18"></i>
+                                    </span>
+                                    <input type="text" id="contact-search" class="form-control bg-light"
+                                        placeholder="Search by username" aria-describedby="basic-addon2">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="p-4 chat-message-list chat-group-list" data-simplebar>
+                            <ul class="list-unstyled chat-list" id="contact-list"></ul>
+                            <div class="empty-note text-muted d-none" id="contact-empty">No one found.</div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        <!-- end chat-leftsidebar -->
+
+
+        <!-- Start User chat -->
+        <div class="user-chat w-100 overflow-hidden">
+            <div class="d-lg-flex">
+
+                <div class="w-100 overflow-hidden position-relative">
+
+                    <!-- shown until a thread is picked -->
+                    <div class="d-flex align-items-center justify-content-center h-100 w-100 position-absolute"
+                        id="no-thread" style="z-index:2;background:var(--bs-body-bg);">
+                        <div class="text-center text-muted p-4">
+                            <i class="ri-chat-smile-2-line d-block" style="font-size:48px;"></i>
+                            <h5 class="mt-3 font-size-16">Pick a chat to start reading</h5>
+                            <p class="mb-0">Or find someone new in Contacts.</p>
+                        </div>
+                    </div>
+
+                    <div class="p-3 p-lg-4 border-bottom user-chat-topbar">
+                        <div class="row align-items-center">
+                            <div class="col-sm-4 col-8">
+                                <div class="d-flex align-items-center">
+                                    <div class="d-block d-lg-none me-2 ms-0">
+                                        <a href="javascript: void(0);"
+                                            class="user-chat-remove text-muted font-size-16 p-2"><i
+                                                class="ri-arrow-left-s-line"></i></a>
+                                    </div>
+                                    <div class="me-3 ms-0" id="peer-avatar-wrap">
+                                        <img src="assets/images/users/avatar-4.jpg" class="rounded-circle avatar-xs"
+                                            alt="" id="peer-avatar">
+                                    </div>
+                                    <div class="flex-grow-1 overflow-hidden">
+                                        <h5 class="font-size-16 mb-0 text-truncate">
+                                            <span class="text-reset" id="peer-name">—</span>
+                                            <i class="ri-record-circle-fill font-size-10 text-success d-inline-block ms-1 d-none"
+                                                id="peer-online-dot"></i>
+                                        </h5>
+                                        <small class="text-muted d-none" id="peer-typing">typing…</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-sm-8 col-4">
+                                <ul class="list-inline user-chat-nav text-end mb-0">
+                                    <li class="list-inline-item">
+                                        <div class="dropdown">
+                                            <button class="btn nav-btn dropdown-toggle" type="button"
+                                                data-bs-toggle="dropdown">
+                                                <i class="ri-more-fill"></i>
+                                            </button>
+                                            <div class="dropdown-menu dropdown-menu-end">
+                                                <a class="dropdown-item" href="#" id="scroll-latest">Jump to latest <i
+                                                        class="ri-arrow-down-line float-end text-muted"></i></a>
+                                            </div>
+                                        </div>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- start chat conversation -->
+                    <div class="chat-conversation p-3 p-lg-4" data-simplebar id="chat-scroll">
+                        <div class="text-center py-2 d-none" id="older-loader">
+                            <span class="spinner-border spinner-border-sm text-muted"></span>
+                        </div>
+                        <ul class="list-unstyled mb-0" id="message-list"></ul>
+                    </div>
+
+                    <!-- start chat input -->
+                    <div class="chat-input-section p-3 p-lg-4 border-top mb-0">
+                        <form id="send-form" autocomplete="off">
+                            <div class="row g-0">
+                                <div class="col">
+                                    <input type="text" id="message-input"
+                                        class="form-control form-control-lg bg-light border-light"
+                                        placeholder="Enter Message..." maxlength="4000" disabled>
+                                </div>
+                                <div class="col-auto">
+                                    <div class="chat-input-links ms-md-2 me-md-0">
+                                        <ul class="list-inline mb-0">
+                                            <li class="list-inline-item">
+                                                <button type="submit" id="send-button"
+                                                    class="btn btn-primary font-size-16 btn-lg chat-send waves-effect waves-light"
+                                                    disabled>
+                                                    <i class="ri-send-plane-2-fill"></i>
+                                                </button>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        <!-- end User chat -->
+
+    </div>
+    <!-- end layout wrapper -->
+
+
+    <!-- JAVASCRIPT -->
+    <script src="assets/libs/jquery/jquery.min.js"></script>
+    <script src="assets/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+    <script src="assets/libs/simplebar/simplebar.min.js"></script>
+    <script src="assets/libs/node-waves/waves.min.js"></script>
+    <script src="assets/js/app.js"></script>
+
+    <!-- index.init.js is deliberately NOT loaded — it contains Chatvia's
+         demo send handler, which appends a fake bubble on every click. -->
+
+    <!-- Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="assets/js/supabase-config.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/chat.js"></script>
+
+</body>
+
+</html>
