@@ -428,7 +428,11 @@
     $("#send-button").disabled = false;
     showTyping(false);
 
-    document.body.classList.add("user-chat-show");
+    // Chatvia's CSS slides the pane in via a class on .user-chat itself,
+    // not on <body>. On desktop the pane is always visible so a wrong
+    // target here looks fine; on mobile nothing opens.
+    const pane = $(".user-chat");
+    if (pane) pane.classList.add("user-chat-show");
 
     const { data: peer } = await window.sb
       .from("profiles")
@@ -913,7 +917,8 @@
 
     $$(".user-chat-remove").forEach((btn) =>
       btn.addEventListener("click", () => {
-        document.body.classList.remove("user-chat-show");
+        const pane = $(".user-chat");
+        if (pane) pane.classList.remove("user-chat-show");
       })
     );
 
