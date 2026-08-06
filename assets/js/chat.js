@@ -1,24 +1,33 @@
 /* =============================================================
-   Chat — thread list, message pane, realtime, optimistic send.
-   Phase 3. Presence, typing and uploads land in Phase 4 and 5.
+   Chat — threads, messages, realtime, optimistic send,
+   presence, typing indicators, read receipts.
+   Phases 3 + 4. Attachments land in Phase 5.
    ============================================================= */
 
 (function () {
   "use strict";
 
   const PAGE_SIZE = 40;
+  const TYPING_PING_EVERY = 1500;  // don't broadcast more often than this
+  const TYPING_CLEAR_AFTER = 3000; // hide the indicator if pings stop
 
   const state = {
-    me: null,            // profiles row
+    me: null,
     email: null,
-    conversations: [],   // list_conversations() rows
-    activeId: null,      // conversation uuid
-    peer: null,          // profile of the other person
-    rendered: new Set(), // message ids already in the DOM
-    oldestLoaded: null,  // created_at of the topmost message
+    conversations: [],
+    activeId: null,
+    peer: null,
+    peerLastRead: null,     // when the other person last opened this thread
+    online: new Set(),
+    rendered: new Set(),
+    oldestLoaded: null,
     reachedStart: false,
     loadingOlder: false,
-    channel: null,
+    channel: null,          // postgres changes
+    presenceChannel: null,  // who's online
+    typingChannel: null,    // per-conversation broadcast
+    lastTypingPing: 0,
+    typingHideTimer: null,
   };
 
   /* ---------- tiny helpers ------------------------------------ */
@@ -27,8 +36,8 @@
   const $$ = (sel) => Array.prototype.slice.call(document.querySelectorAll(sel));
 
   // Message content is user input rendered into an HTML string.
-  // Skip this and any user can inject script tags into every thread
-  // they are part of.
+  // Skip this and anyone can inject script tags into every thread
+  // they belong to.
   function esc(value) {
     return String(value === null || value === undefined ? "" : value)
       .replace(/&/g, "&amp;")
@@ -39,8 +48,7 @@
   }
 
   function initials(profile) {
-    const source = (profile.display_name || profile.username || "?").trim();
-    return source.charAt(0).toUpperCase();
+    return (profile.display_name || profile.username || "?").trim().charAt(0).toUpperCase();
   }
 
   function nameOf(profile) {
@@ -48,10 +56,7 @@
   }
 
   function clockTime(iso) {
-    return new Date(iso).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
   function relativeTime(iso) {
@@ -70,7 +75,6 @@
     const today = new Date();
     const yesterday = new Date();
     yesterday.setDate(today.getDate() - 1);
-
     const sameDay = (a, b) => a.toDateString() === b.toDateString();
 
     if (sameDay(date, today)) return "Today";
@@ -86,12 +90,10 @@
     return new Date(iso).toDateString();
   }
 
-  /* Simplebar hijacks the scroll container, so element.scrollTop on
-     the original div does nothing. The real scroller is the wrapper
-     simplebar injects. */
+  /* Simplebar moves your content into an injected wrapper, so
+     scrollTop on the original div silently does nothing. */
   function scroller() {
-    const wrap = $("#chat-scroll .simplebar-content-wrapper");
-    return wrap || $("#chat-scroll");
+    return $("#chat-scroll .simplebar-content-wrapper") || $("#chat-scroll");
   }
 
   function scrollToBottom(smooth) {
@@ -108,10 +110,7 @@
 
   function avatarMarkup(profile, sizeClass) {
     if (profile.avatar_url) {
-      return (
-        '<img src="' + esc(profile.avatar_url) + '" class="rounded-circle ' +
-        sizeClass + '" alt="">'
-      );
+      return '<img src="' + esc(profile.avatar_url) + '" class="rounded-circle ' + sizeClass + '" alt="">';
     }
     return (
       '<span class="avatar-title rounded-circle bg-primary-subtle text-primary ' +
@@ -137,7 +136,6 @@
       .single();
 
     if (error || !data) {
-      // signed in but no profile row — the signup trigger failed
       console.error("No profile row for this account.", error);
       alert("Your account has no profile. Sign out and register again.");
       return false;
@@ -152,11 +150,9 @@
     $$("[data-me-name]").forEach((el) => (el.textContent = nameOf(state.me)));
     $$("[data-me-username]").forEach((el) => (el.textContent = "@" + state.me.username));
     $$("[data-me-email]").forEach((el) => (el.textContent = state.email || "—"));
-
     if (state.me.avatar_url) {
       $$("[data-me-avatar]").forEach((el) => (el.src = state.me.avatar_url));
     }
-
     const nameField = $("#profile-display-name");
     if (nameField) nameField.value = state.me.display_name || "";
   }
@@ -165,12 +161,10 @@
 
   async function loadConversations() {
     const { data, error } = await window.sb.rpc("list_conversations");
-
     if (error) {
       console.error("list_conversations failed", error);
       return;
     }
-
     state.conversations = data || [];
     renderConversations();
   }
@@ -191,6 +185,7 @@
 
     empty.classList.toggle("d-none", rows.length > 0);
     list.innerHTML = rows.map(conversationItem).join("");
+    paintOnlineStrip();
   }
 
   function conversationItem(row) {
@@ -206,8 +201,7 @@
     } else if (row.last_message_kind === "file") {
       preview = '<i class="ri-file-text-fill align-middle me-1 ms-0"></i> File';
     } else if (row.last_message_text) {
-      const mine = row.last_message_sender === state.me.id;
-      preview = (mine ? "You: " : "") + esc(row.last_message_text);
+      preview = (row.last_message_sender === state.me.id ? "You: " : "") + esc(row.last_message_text);
     } else {
       preview = "<em>No messages yet</em>";
     }
@@ -215,19 +209,20 @@
     const unread = row.unread_count > 0;
     const badge = unread
       ? '<div class="unread-message"><span class="badge badge-soft-danger rounded-pill">' +
-        (row.unread_count > 99 ? "99+" : row.unread_count) +
-        "</span></div>"
+        (row.unread_count > 99 ? "99+" : row.unread_count) + "</span></div>"
       : "";
 
+    const isOnline = state.online.has(row.other_id);
+
     return (
-      '<li class="' +
-      (unread ? "unread " : "") +
+      '<li class="' + (unread ? "unread " : "") +
       (row.conversation_id === state.activeId ? "active" : "") +
       '" data-conversation="' + esc(row.conversation_id) +
       '" data-peer="' + esc(row.other_id) + '">' +
       '<a href="javascript:void(0);">' +
       '<div class="d-flex">' +
-      '<div class="chat-user-img align-self-center me-3 ms-0">' +
+      '<div class="chat-user-img ' + (isOnline ? "online" : "away") +
+      ' align-self-center me-3 ms-0">' +
       avatarMarkup(peer, "avatar-xs") +
       '<span class="user-status"></span>' +
       "</div>" +
@@ -237,10 +232,148 @@
       "</div>" +
       '<div class="font-size-11">' +
       (row.last_message_text || row.last_message_kind ? relativeTime(row.last_message_at) : "") +
-      "</div>" +
-      badge +
+      "</div>" + badge +
       "</div></a></li>"
     );
+  }
+
+  /* ---------- presence -----------------------------------------
+     Supabase tracks online state on the channel itself and drops
+     it automatically when the socket closes. No table, no rows,
+     nothing left behind by a crashed tab.
+     ------------------------------------------------------------- */
+
+  function startPresence() {
+    state.presenceChannel = window.sb.channel("online-users", {
+      config: { presence: { key: state.me.id } },
+    });
+
+    state.presenceChannel
+      .on("presence", { event: "sync" }, () => {
+        const raw = state.presenceChannel.presenceState();
+        state.online = new Set(Object.keys(raw));
+        paintPresence();
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await state.presenceChannel.track({ online_at: new Date().toISOString() });
+        }
+      });
+  }
+
+  function paintPresence() {
+    // sidebar dots
+    $$("#conversation-list li[data-peer]").forEach((li) => {
+      const img = li.querySelector(".chat-user-img");
+      if (!img) return;
+      const on = state.online.has(li.dataset.peer);
+      img.classList.toggle("online", on);
+      img.classList.toggle("away", !on);
+    });
+
+    // the open thread's header dot
+    const dot = $("#peer-online-dot");
+    if (dot) {
+      dot.classList.toggle("d-none", !(state.peer && state.online.has(state.peer.id)));
+    }
+
+    paintOnlineStrip();
+  }
+
+  function paintOnlineStrip() {
+    const strip = $("#online-strip");
+    const wrap = $("#online-strip-wrap");
+    if (!strip || !wrap) return;
+
+    const people = state.conversations.filter((row) => state.online.has(row.other_id));
+
+    wrap.classList.toggle("d-none", people.length === 0);
+
+    strip.innerHTML = people
+      .map((row) => {
+        const peer = {
+          username: row.other_username,
+          display_name: row.other_display_name,
+          avatar_url: row.other_avatar_url,
+        };
+        return (
+          '<a href="javascript:void(0);" class="user-status-box" ' +
+          'data-conversation="' + esc(row.conversation_id) + '" ' +
+          'data-peer="' + esc(row.other_id) + '">' +
+          '<div class="avatar-xs mx-auto d-block chat-user-img online">' +
+          avatarMarkup(peer, "avatar-xs") +
+          '<span class="user-status"></span>' +
+          "</div>" +
+          '<h5 class="font-size-13 text-truncate mt-3 mb-1">' +
+          esc(nameOf(peer)) + "</h5></a>"
+        );
+      })
+      .join("");
+  }
+
+  /* ---------- typing -------------------------------------------
+     Broadcast, not database. These are ephemeral pings that live
+     only on the websocket — writing them as rows would mean a
+     Postgres insert every few keystrokes, replicated to every
+     subscriber, for information worthless two seconds later.
+     ------------------------------------------------------------- */
+
+  function startTypingChannel(conversationId) {
+    if (state.typingChannel) {
+      window.sb.removeChannel(state.typingChannel);
+      state.typingChannel = null;
+    }
+
+    state.typingChannel = window.sb.channel("typing:" + conversationId, {
+      config: { broadcast: { self: false } },
+    });
+
+    state.typingChannel
+      .on("broadcast", { event: "typing" }, (message) => {
+        if (!message.payload || message.payload.userId === state.me.id) return;
+        showTyping(message.payload.typing !== false);
+      })
+      .subscribe();
+  }
+
+  function pingTyping() {
+    if (!state.typingChannel) return;
+    const now = Date.now();
+    if (now - state.lastTypingPing < TYPING_PING_EVERY) return;
+    state.lastTypingPing = now;
+    state.typingChannel.send({
+      type: "broadcast",
+      event: "typing",
+      payload: { userId: state.me.id, typing: true },
+    });
+  }
+
+  function stopTyping() {
+    if (!state.typingChannel) return;
+    state.lastTypingPing = 0;
+    state.typingChannel.send({
+      type: "broadcast",
+      event: "typing",
+      payload: { userId: state.me.id, typing: false },
+    });
+  }
+
+  function showTyping(isTyping) {
+    const label = $("#peer-typing");
+    if (!label) return;
+
+    clearTimeout(state.typingHideTimer);
+
+    if (!isTyping) {
+      label.classList.add("d-none");
+      return;
+    }
+
+    label.classList.remove("d-none");
+    // if pings stop arriving, assume they walked away mid-sentence
+    state.typingHideTimer = setTimeout(() => {
+      label.classList.add("d-none");
+    }, TYPING_CLEAR_AFTER);
   }
 
   /* ---------- contacts ----------------------------------------- */
@@ -249,7 +382,6 @@
 
   async function loadContacts(term) {
     const { data, error } = await window.sb.rpc("search_users", { term: term || "" });
-
     const list = $("#contact-list");
     const empty = $("#contact-empty");
 
@@ -266,8 +398,10 @@
           '<li data-start-chat="' + esc(person.id) + '">' +
           '<a href="javascript:void(0);">' +
           '<div class="d-flex align-items-center">' +
-          '<div class="chat-user-img align-self-center me-3 ms-0">' +
+          '<div class="chat-user-img ' + (state.online.has(person.id) ? "online" : "away") +
+          ' align-self-center me-3 ms-0">' +
           avatarMarkup(person, "avatar-xs") +
+          '<span class="user-status"></span>' +
           "</div>" +
           '<div class="flex-grow-1 overflow-hidden">' +
           '<h5 class="text-truncate font-size-14 mb-0">' + esc(nameOf(person)) + "</h5>" +
@@ -286,13 +420,14 @@
     state.rendered.clear();
     state.oldestLoaded = null;
     state.reachedStart = false;
+    state.peerLastRead = null;
 
     $("#message-list").innerHTML = "";
     $("#no-thread").classList.add("d-none");
     $("#message-input").disabled = false;
     $("#send-button").disabled = false;
+    showTyping(false);
 
-    // mobile: the template reveals the pane with this class
     document.body.classList.add("user-chat-show");
 
     const { data: peer } = await window.sb
@@ -308,9 +443,35 @@
       $("#peer-avatar-wrap").innerHTML = avatarMarkup(peer, "avatar-xs");
     }
 
+    await refreshPeerReadStamp();
     highlightActive();
+    paintPresence();
+    startTypingChannel(conversationId);
+
     await loadMessages();
     await markRead();
+  }
+
+  /* Which of the two read columns belongs to the other person
+     depends on the uuid ordering, so read the row and work it out. */
+  async function refreshPeerReadStamp(row) {
+    let conv = row;
+
+    if (!conv) {
+      const { data } = await window.sb
+        .from("conversations")
+        .select("user_a, user_b, user_a_last_read_at, user_b_last_read_at")
+        .eq("id", state.activeId)
+        .single();
+      conv = data;
+    }
+
+    if (!conv) return;
+
+    state.peerLastRead =
+      conv.user_a === state.me.id ? conv.user_b_last_read_at : conv.user_a_last_read_at;
+
+    paintTicks();
   }
 
   function highlightActive() {
@@ -336,7 +497,6 @@
 
     await loadConversations();
 
-    // jump the sidebar back to Chats
     const chatTab = document.getElementById("pills-chat-tab");
     if (chatTab && window.bootstrap) {
       window.bootstrap.Tab.getOrCreateInstance(chatTab).show();
@@ -348,14 +508,12 @@
   /* ---------- messages ----------------------------------------- */
 
   async function loadMessages() {
-    let query = window.sb
+    const { data, error } = await window.sb
       .from("messages")
       .select("*")
       .eq("conversation_id", state.activeId)
       .order("created_at", { ascending: false })
       .limit(PAGE_SIZE);
-
-    const { data, error } = await query;
 
     if (error) {
       console.error("loading messages failed", error);
@@ -363,11 +521,11 @@
     }
 
     const rows = (data || []).slice().reverse();
-
     if (rows.length < PAGE_SIZE) state.reachedStart = true;
     if (rows.length) state.oldestLoaded = rows[0].created_at;
 
     renderMessageBatch(rows, "append");
+    paintTicks();
     scrollToBottom(false);
   }
 
@@ -397,14 +555,13 @@
     }
 
     const rows = (data || []).slice().reverse();
-
     if (rows.length < PAGE_SIZE) state.reachedStart = true;
     if (!rows.length) return;
 
     state.oldestLoaded = rows[0].created_at;
     renderMessageBatch(rows, "prepend");
+    paintTicks();
 
-    // keep the reading position steady instead of jumping to the top
     if (el) el.scrollTop = el.scrollHeight - previousHeight;
   }
 
@@ -455,6 +612,9 @@
       ? ' <span class="align-middle font-size-11">(edited)</span>'
       : "";
 
+    // only your own messages carry receipts — you can't "read" your own
+    const ticks = mine ? ' <span class="msg-ticks align-middle"></span>' : "";
+
     const menu = mine
       ? '<div class="dropdown align-self-start">' +
         '<a class="dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">' +
@@ -467,7 +627,10 @@
 
     return (
       '<li class="' + (mine ? "right " : "") + (pending ? "msg-pending" : "") +
-      '" data-message="' + esc(row.id) + '" data-day="' + esc(dayKey(row.created_at)) + '">' +
+      '" data-message="' + esc(row.id) + '"' +
+      ' data-day="' + esc(dayKey(row.created_at)) + '"' +
+      ' data-at="' + esc(row.created_at) + '"' +
+      ' data-mine="' + (mine ? "1" : "0") + '">' +
       '<div class="conversation-list">' +
       '<div class="chat-avatar">' + avatarMarkup(author, "avatar-xs") + "</div>" +
       '<div class="user-chat-content">' +
@@ -476,21 +639,51 @@
       body +
       '<p class="chat-time mb-0"><i class="ri-time-line align-middle"></i> ' +
       '<span class="align-middle">' + esc(clockTime(row.created_at)) + "</span>" +
-      edited +
+      edited + ticks +
       "</p>" +
-      "</div>" +
-      menu +
+      "</div>" + menu +
       "</div>" +
       '<div class="conversation-name">' + esc(nameOf(author)) + "</div>" +
       "</div></div></li>"
     );
   }
 
-  /* ---------- sending ------------------------------------------
-     Optimistic. The bubble appears immediately with a client-made
-     uuid, which is also the row's primary key. That shared id is
-     what makes the realtime echo of our own message deduplicate
-     cleanly instead of rendering twice.
+  /* ---------- read receipts ------------------------------------
+     A message counts as read when it's older than the other
+     person's last_read_at. One timestamp per participant does the
+     work of an entire per-message receipts table.
+     ------------------------------------------------------------- */
+
+  function paintTicks() {
+    const readUpTo = state.peerLastRead ? new Date(state.peerLastRead).getTime() : 0;
+
+    $$('#message-list li[data-mine="1"]').forEach((li) => {
+      const slot = li.querySelector(".msg-ticks");
+      if (!slot) return;
+
+      if (li.classList.contains("msg-pending") || li.classList.contains("msg-failed")) {
+        slot.innerHTML = "";
+        return;
+      }
+
+      const sentAt = new Date(li.dataset.at).getTime();
+
+      slot.innerHTML =
+        sentAt <= readUpTo
+          ? '<i class="ri-check-double-line text-info"></i>'
+          : '<i class="ri-check-line"></i>';
+    });
+  }
+
+  async function markRead() {
+    if (!state.activeId) return;
+    await window.sb.rpc("mark_read", { conv_id: state.activeId });
+  }
+
+  /* ---------- sending -------------------------------------------
+     Optimistic. The browser mints the uuid and uses it as the row's
+     primary key, so the realtime echo of our own message arrives
+     under an id already on screen and dedupes cleanly.
      ------------------------------------------------------------- */
 
   async function sendMessage(text) {
@@ -508,6 +701,7 @@
     state.rendered.add(id);
     renderPending(row);
     scrollToBottom(true);
+    stopTyping();
 
     const { error } = await window.sb.from("messages").insert({
       id: id,
@@ -535,6 +729,7 @@
     }
 
     if (bubble) bubble.classList.remove("msg-pending");
+    paintTicks();
     loadConversations();
   }
 
@@ -554,24 +749,17 @@
     list.insertAdjacentHTML("beforeend", messageMarkup(row, true));
   }
 
-  /* ---------- read receipts (write side) ------------------------ */
-
-  async function markRead() {
-    if (!state.activeId) return;
-    await window.sb.rpc("mark_read", { conv_id: state.activeId });
-  }
-
   /* ---------- realtime -----------------------------------------
      One channel, no conversation filter. RLS already limits the
      stream to threads you belong to, and an unfiltered channel is
-     what lets the sidebar update for threads that aren't open.
+     what lets the sidebar react to threads that aren't open.
      ------------------------------------------------------------- */
 
   function subscribe() {
     if (state.channel) window.sb.removeChannel(state.channel);
 
     state.channel = window.sb
-      .channel("messages-stream")
+      .channel("db-stream")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages" },
@@ -587,6 +775,17 @@
           loadConversations();
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "conversations" },
+        (payload) => {
+          // the other person opening the thread bumps their timestamp,
+          // which is what turns our ticks blue
+          if (payload.new.id === state.activeId) {
+            refreshPeerReadStamp(payload.new);
+          }
+        }
+      )
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           console.warn("realtime channel dropped:", status);
@@ -597,7 +796,6 @@
   function handleIncoming(payload) {
     const row = payload.new;
 
-    // our own optimistic bubble is already on screen under this id
     if (state.rendered.has(row.id)) {
       loadConversations();
       return;
@@ -606,8 +804,10 @@
     if (row.conversation_id === state.activeId) {
       const stick = nearBottom();
       renderMessageBatch([row], "append");
+      paintTicks();
+      showTyping(false);
       if (stick) scrollToBottom(true);
-      markRead();
+      if (!document.hidden) markRead();
     }
 
     loadConversations();
@@ -616,37 +816,47 @@
   /* ---------- events -------------------------------------------- */
 
   function wire() {
-    // pick a thread
     $("#conversation-list").addEventListener("click", (event) => {
       const li = event.target.closest("li[data-conversation]");
       if (!li) return;
       openConversation(li.dataset.conversation, li.dataset.peer);
     });
 
-    // start a thread from contacts
+    $("#online-strip").addEventListener("click", (event) => {
+      const box = event.target.closest("[data-conversation]");
+      if (!box) return;
+      openConversation(box.dataset.conversation, box.dataset.peer);
+    });
+
     $("#contact-list").addEventListener("click", (event) => {
       const li = event.target.closest("li[data-start-chat]");
       if (!li) return;
       startChatWith(li.dataset.startChat);
     });
 
-    // filter threads
     $("#chat-filter").addEventListener("input", renderConversations);
 
-    // search people, debounced
     $("#contact-search").addEventListener("input", (event) => {
       clearTimeout(contactTimer);
       const term = event.target.value;
       contactTimer = setTimeout(() => loadContacts(term), 300);
     });
 
-    // load contacts the first time the tab is opened
     const contactsTab = document.getElementById("pills-contacts-tab");
     if (contactsTab) {
       contactsTab.addEventListener("shown.bs.tab", () => loadContacts(""));
     }
 
-    // send
+    // typing pings
+    $("#message-input").addEventListener("input", (event) => {
+      if (!state.activeId) return;
+      if (event.target.value.trim()) {
+        pingTyping();
+      } else {
+        stopTyping();
+      }
+    });
+
     $("#send-form").addEventListener("submit", (event) => {
       event.preventDefault();
       const field = $("#message-input");
@@ -656,7 +866,6 @@
       sendMessage(text);
     });
 
-    // message actions
     $("#message-list").addEventListener("click", async (event) => {
       const retry = event.target.closest("[data-retry]");
       if (retry) {
@@ -673,8 +882,8 @@
       if (copy) {
         event.preventDefault();
         const li = copy.closest("li[data-message]");
-        const text = li.querySelector(".ctext-wrap-content p").textContent;
-        navigator.clipboard.writeText(text);
+        const p = li.querySelector(".ctext-wrap-content p");
+        if (p) navigator.clipboard.writeText(p.textContent);
         return;
       }
 
@@ -690,7 +899,6 @@
       }
     });
 
-    // infinite scroll upward
     const el = scroller();
     if (el) {
       el.addEventListener("scroll", () => {
@@ -703,14 +911,17 @@
       scrollToBottom(true);
     });
 
-    // mobile back button
     $$(".user-chat-remove").forEach((btn) =>
       btn.addEventListener("click", () => {
         document.body.classList.remove("user-chat-show");
       })
     );
 
-    // profile save
+    // coming back to the tab counts as reading
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && state.activeId) markRead();
+    });
+
     $("#profile-save").addEventListener("click", async () => {
       const value = $("#profile-display-name").value.trim();
       const feedback = $("#profile-feedback");
@@ -734,19 +945,19 @@
       setTimeout(() => (feedback.textContent = ""), 2500);
     });
 
-    // logout
     ["#logout-desktop", "#logout-mobile"].forEach((sel) => {
       const link = $(sel);
       if (!link) return;
       link.addEventListener("click", async (event) => {
         event.preventDefault();
+        if (state.presenceChannel) await window.sb.removeChannel(state.presenceChannel);
+        if (state.typingChannel) await window.sb.removeChannel(state.typingChannel);
         if (state.channel) await window.sb.removeChannel(state.channel);
         await window.sb.auth.signOut();
         window.location.replace("login.html");
       });
     });
 
-    // refresh timestamps in the sidebar so "5 min" doesn't go stale
     setInterval(renderConversations, 60000);
   }
 
@@ -759,5 +970,6 @@
     wire();
     await loadConversations();
     subscribe();
+    startPresence();
   });
 })();
