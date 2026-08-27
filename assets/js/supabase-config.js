@@ -8,8 +8,8 @@
    file that reaches the browser.
    ============================================================= */
 
-const SUPABASE_URL = "https://sczmlvsbxkuomdquinfm.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNjem1sdnNieGt1b21kcXVpbmZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYwMDM3MjcsImV4cCI6MjEwMTU3OTcyN30.m90pvbK56QyekBnq4gBoLNfk4-B_gBGsFI132uTshiw";
+const SUPABASE_URL = "https://djyoceybxvutuhiotmcb.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqeW9jZXlieHZ1dHVoaW90bWNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3ODk1NDMsImV4cCI6MjEwMzM2NTU0M30.v48O6nsozEMCO8YdcCdpx_Wv17DCG_9ZPWEsXQ25BNk";
 
 /* -------------------------------------------------------------
    "Remember me" storage adapter.
